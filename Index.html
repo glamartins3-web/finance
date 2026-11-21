@@ -171,6 +171,7 @@
     @media (min-width: 900px) {
       .form-group input, .form-group select { font-size: 0.95rem; }
     }
+    .best-day-hint { display: block; margin-top: 4px; font-size: 0.75rem; color: var(--primary); font-weight: 600; }
 
     .filter-box { background: var(--secondary-bg); border: 1px dashed var(--primary); padding: 10px; border-radius: 8px; margin-bottom: 14px; }
     .filter-box h3 { font-size: 0.78rem; color: var(--primary); margin-bottom: 6px; text-transform: uppercase; }
@@ -180,7 +181,7 @@
     button.btn-submit:disabled { background-color: #a0aec0; cursor: not-allowed; }
 
     .table-responsive { overflow-x: auto; -webkit-overflow-scrolling: touch; width: 100%; }
-    table { width: 100%; border-collapse: collapse; text-align: left; min-width: 480px; }
+    table { width: 100%; border-collapse: collapse; text-align: left; min-width: 500px; }
     th, td { padding: 9px 10px; border-bottom: 1px solid var(--border); font-size: 0.82rem; color: var(--text-main); vertical-align: middle; }
     @media (min-width: 768px) {
       th, td { padding: 10px 12px; font-size: 0.85rem; }
@@ -312,7 +313,8 @@
               </div>
               <div class="form-group" id="card-select-group" style="display:none;">
                 <label>Cartão de Crédito</label>
-                <select id="card"><option value="Nenhum">Nenhum / Dinheiro / PIX</option></select>
+                <select id="card" onchange="updateBestDayHint()"><option value="Nenhum">Nenhum / Dinheiro / PIX</option></select>
+                <small class="best-day-hint" id="best-day-hint"></small>
               </div>
               <div class="form-group">
                 <label>Categoria</label>
@@ -357,7 +359,8 @@
             <form id="card-form" onsubmit="addCreditCard(event)">
               <div class="form-group"><label>Nome do Cartão</label><input type="text" id="new-card-name" placeholder="Ex: Nubank" required></div>
               <div class="form-group"><label>Final (Dígitos)</label><input type="text" id="new-card-final" placeholder="Ex: 1234"></div>
-              <div class="form-group"><label>Vencimento</label><input type="text" id="new-card-due" placeholder="Ex: Dia 15" required></div>
+              <div class="form-group"><label>Vencimento da Fatura</label><input type="text" id="new-card-due" placeholder="Ex: Dia 15" required></div>
+              <div class="form-group"><label>Melhor Dia de Compra</label><input type="text" id="new-card-best-day" placeholder="Ex: Dia 02" required></div>
               <button type="submit" class="btn-submit">Cadastrar Cartão</button>
             </form>
           </div>
@@ -365,7 +368,7 @@
             <h2>Faturas por Cartão (Visão Guarda-Chuva)</h2>
             <div class="table-responsive">
               <table>
-                <thead><tr><th>Nome</th><th>Final</th><th>Venc.</th><th>Fatura Atual</th></tr></thead>
+                <thead><tr><th>Nome / Melhor Compra</th><th>Final</th><th>Venc.</th><th>Fatura Atual</th></tr></thead>
                 <tbody id="credit-cards-tree"></tbody>
               </table>
             </div>
@@ -528,6 +531,24 @@
       }
     }
 
+    function formatBestDayLabel(val) {
+      if (!val || val === '-') return '-';
+      const cleaned = String(val).trim();
+      return /^dia\s*/i.test(cleaned) ? cleaned : `Dia ${cleaned.padStart(2, '0')}`;
+    }
+
+    function updateBestDayHint() {
+      const cardSel = document.getElementById('card');
+      const hint = document.getElementById('best-day-hint');
+      if (!cardSel || !hint) return;
+      const cardObj = registeredCards.find(c => c.name === cardSel.value);
+      if (cardObj && cardObj.bestDay && cardObj.bestDay !== '-') {
+        hint.textContent = `✨ Melhor dia de compra: ${formatBestDayLabel(cardObj.bestDay)}`;
+      } else {
+        hint.textContent = '';
+      }
+    }
+
     function updateCardSelects() {
       const selects = [document.getElementById('card'), document.getElementById('sub-card')];
       selects.forEach(sel => {
@@ -540,6 +561,7 @@
           sel.appendChild(opt);
         });
       });
+      updateBestDayHint();
     }
 
     async function addCreditCard(e) {
@@ -547,10 +569,11 @@
       const name = document.getElementById('new-card-name').value.trim();
       const final = document.getElementById('new-card-final').value.trim() || '-';
       const due = document.getElementById('new-card-due').value.trim();
+      const bestDay = document.getElementById('new-card-best-day').value.trim() || '-';
       if (!name || !due) return;
 
-      const payload = { action: 'addCard', name, final, due };
-      registeredCards.push({ name, final, due });
+      const payload = { action: 'addCard', name, final, due, bestDay };
+      registeredCards.push({ name, final, due, bestDay });
       updateCardSelects();
       document.getElementById('card-form').reset();
       renderTransactions();
@@ -625,7 +648,9 @@
 
     function toggleCardSelect() {
       const type = document.getElementById('type').value;
-      document.getElementById('card-select-group').style.display = ['Despesa Variável', 'Investimento', 'Despesa Fixa'].includes(type) ? 'block' : 'none';
+      const showCard = ['Despesa Variável', 'Investimento', 'Despesa Fixa'].includes(type);
+      document.getElementById('card-select-group').style.display = showCard ? 'block' : 'none';
+      if (showCard) updateBestDayHint();
     }
 
     function populateYearFilter() {
@@ -692,11 +717,17 @@
       registeredCards.forEach((c, idx) => {
         const cardExpenses = filteredData.filter(t => t.card === c.name);
         const cardTotal = cardExpenses.reduce((sum, item) => sum + item.amount, 0);
+        const bestLabel = formatBestDayLabel(c.bestDay);
 
         const trCard = document.createElement('tr');
         trCard.className = 'card-header-row';
         trCard.onclick = () => toggleSubItems(`card-sub-${idx}`, `icon-${idx}`);
-        trCard.innerHTML = `<td><span class="tree-icon" id="icon-${idx}">▶</span>${c.name}</td><td>${c.final}</td><td>${c.due}</td><td style="color: var(--expense); font-weight: bold;">${formatCurrency(cardTotal)}</td>`;
+        trCard.innerHTML = `
+          <td><span class="tree-icon" id="icon-${idx}">▶</span>${c.name}<br><small style="font-weight:normal; color:var(--primary);">Melhor compra: ${bestLabel}</small></td>
+          <td>${c.final}</td>
+          <td>${c.due}</td>
+          <td style="color: var(--expense); font-weight: bold;">${formatCurrency(cardTotal)}</td>
+        `;
         treeBody.appendChild(trCard);
 
         if (cardExpenses.length === 0) {
