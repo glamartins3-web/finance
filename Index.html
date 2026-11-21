@@ -502,8 +502,8 @@
       document.getElementById('login-screen').style.display = 'none';
       document.getElementById('user-display-name').textContent = user.nome;
       document.getElementById('date').valueAsDate = new Date();
-      if(document.getElementById('sub-date')) document.getElementById('sub-date').valueAsDate = new Date();
-      
+      if (document.getElementById('sub-date')) document.getElementById('sub-date').valueAsDate = new Date();
+
       await loadDataFromSheet();
     }
 
@@ -513,14 +513,50 @@
       document.getElementById('login-form').reset();
     }
 
+    function normalizeCardValue(val) {
+      const str = String(val || '').trim();
+      if (!str || str === '-' || /^nenhum/i.test(str) || /^dinheiro/i.test(str) || /^pix/i.test(str)) {
+        return 'Nenhum';
+      }
+      return str;
+    }
+
     async function loadDataFromSheet() {
       try {
         const res = await fetch(SCRIPT_URL + '?action=getData');
         const data = await res.json();
-        if (data.cards) registeredCards = data.cards;
-        if (data.transactions) transactions = data.transactions;
-        if (data.subscriptions) subscriptions = data.subscriptions;
-        
+        if (data.cards) {
+          registeredCards = data.cards.map(c => ({
+            name: String(c.name || '').trim(),
+            final: c.final || '-',
+            due: c.due || '-',
+            bestDay: c.bestDay || '-'
+          })).filter(c => c.name);
+        }
+        if (data.transactions) {
+          transactions = data.transactions.map(t => ({
+            id: String(t.id || ('id_' + Math.random().toString(36).slice(2))),
+            date: t.date || '',
+            description: String(t.description || ''),
+            category: String(t.category || 'Outros'),
+            amount: Number(t.amount || 0),
+            type: String(t.type || 'Despesa Variável'),
+            card: normalizeCardValue(t.card),
+            status: String(t.status || 'Pendente')
+          }));
+        }
+        if (data.subscriptions) {
+          subscriptions = data.subscriptions.map(s => ({
+            id: String(s.id || ('id_sub_' + Math.random().toString(36).slice(2))),
+            description: String(s.description || ''),
+            date: s.date || '',
+            amount: Number(s.amount || 0),
+            card: normalizeCardValue(s.card),
+            status: String(s.status || 'Ativo'),
+            payStatus: String(s.payStatus || 'Pendente')
+          }));
+        }
+
         updateCardSelects();
         populateYearFilter();
         setDefaultCurrentMonthYear();
@@ -541,7 +577,7 @@
       const cardSel = document.getElementById('card');
       const hint = document.getElementById('best-day-hint');
       if (!cardSel || !hint) return;
-      const cardObj = registeredCards.find(c => c.name === cardSel.value);
+      const cardObj = registeredCards.find(c => c.name.toLowerCase() === cardSel.value.toLowerCase());
       if (cardObj && cardObj.bestDay && cardObj.bestDay !== '-') {
         hint.textContent = `✨ Melhor dia de compra: ${formatBestDayLabel(cardObj.bestDay)}`;
       } else {
@@ -553,13 +589,17 @@
       const selects = [document.getElementById('card'), document.getElementById('sub-card')];
       selects.forEach(sel => {
         if (!sel) return;
+        const previousVal = sel.value;
         sel.innerHTML = '<option value="Nenhum">Nenhum / Dinheiro / PIX</option>';
         registeredCards.forEach(c => {
           const opt = document.createElement('option');
           opt.value = c.name;
-          opt.textContent = `${c.name} ${c.final !== '-' ? '('+c.final+')' : ''}`;
+          opt.textContent = `${c.name} ${c.final !== '-' ? '(' + c.final + ')' : ''}`;
           sel.appendChild(opt);
         });
+        if (previousVal && Array.from(sel.options).some(o => o.value === previousVal)) {
+          sel.value = previousVal;
+        }
       });
       updateBestDayHint();
     }
@@ -578,14 +618,17 @@
       document.getElementById('card-form').reset();
       renderTransactions();
 
-      await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      await fetch(SCRIPT_URL, {
+        method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
     }
 
     async function addSubscription(e) {
       e.preventDefault();
       const description = document.getElementById('sub-name').value.trim();
       const amount = parseFloat(document.getElementById('sub-amount').value);
-      const card = document.getElementById('sub-card').value;
+      const card = normalizeCardValue(document.getElementById('sub-card').value);
       const date = document.getElementById('sub-date').value;
 
       if (!description || isNaN(amount) || !date) return;
@@ -608,13 +651,17 @@
       document.getElementById('subscription-form').reset();
       document.getElementById('sub-date').valueAsDate = new Date();
 
-      await fetch(SCRIPT_URL, { method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+      await fetch(SCRIPT_URL, {
+        method: 'POST', mode: 'no-cors', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
     }
 
     async function toggleSubStatus(index) {
       const sub = subscriptions[index];
+      if (!sub) return;
       sub.status = sub.status === 'Ativo' ? 'Inativo' : 'Ativo';
-      
+
       transactions = transactions.filter(t => t.id !== sub.id);
       if (sub.status === 'Ativo') {
         transactions.push({
@@ -634,6 +681,7 @@
 
     async function removeSubscription(index) {
       const sub = subscriptions[index];
+      if (!sub) return;
       subscriptions.splice(index, 1);
       transactions = transactions.filter(t => t.id !== sub.id);
 
@@ -715,7 +763,7 @@
         return;
       }
       registeredCards.forEach((c, idx) => {
-        const cardExpenses = filteredData.filter(t => t.card === c.name);
+        const cardExpenses = filteredData.filter(t => t.card && t.card.toLowerCase() === c.name.toLowerCase());
         const cardTotal = cardExpenses.reduce((sum, item) => sum + item.amount, 0);
         const bestLabel = formatBestDayLabel(c.bestDay);
 
@@ -741,7 +789,7 @@
             const trSub = document.createElement('tr');
             trSub.className = `sub-item-row card-sub-${idx}`;
             trSub.style.display = 'none';
-            trSub.innerHTML = `<td colspan="3">↳ ${exp.description} (${exp.date.split('-').reverse().join('/')})</td><td style="font-weight: bold;">${formatCurrency(exp.amount)}</td>`;
+            trSub.innerHTML = `<td colspan="3">↳ ${exp.description} (${exp.date ? exp.date.split('-').reverse().join('/') : ''})</td><td style="font-weight: bold;">${formatCurrency(exp.amount)}</td>`;
             treeBody.appendChild(trSub);
           });
         }
@@ -764,7 +812,7 @@
 
         tr.innerHTML = `
           <td>${s.date ? s.date.split('-').reverse().join('/') : ''}</td>
-          <td><strong>${s.description}</strong><br><small style="color:var(--primary)">💳 ${s.card || 'Outros'}</small></td>
+          <td><strong>${s.description}</strong><br><small style="color:var(--primary)">💳 ${s.card || 'Nenhum'}</small></td>
           <td style="font-weight: bold; color: var(--expense);">${formatCurrency(s.amount)}</td>
           <td style="font-weight: bold; color: var(--primary);">${formatCurrency(annualTotal)}</td>
           <td><button class="status-badge ${statusClass}" onclick="toggleSubStatus(${idx})">${s.status}</button></td>
@@ -781,7 +829,7 @@
       for (let r of rows) {
         if (r.style.display === 'none') { r.style.display = 'table-row'; isHidden = true; } else { r.style.display = 'none'; }
       }
-      icon.textContent = isHidden ? '▼' : '▶';
+      if (icon) icon.textContent = isHidden ? '▼' : '▶';
     }
 
     function updateDashboard(filteredData) {
@@ -799,10 +847,10 @@
 
       const fixedExpenses = filteredData.filter(t => t.type === 'Despesa Fixa').reduce((acc, t) => acc + t.amount, 0);
       const variableExpenses = filteredData.filter(t => t.type === 'Despesa Variável' && (!t.card || t.card === 'Nenhum')).reduce((acc, t) => acc + t.amount, 0);
-      
+
       let totalCardsExpenses = 0;
       registeredCards.forEach(c => {
-        totalCardsExpenses += filteredData.filter(t => t.card === c.name).reduce((sum, item) => sum + item.amount, 0);
+        totalCardsExpenses += filteredData.filter(t => t.card && t.card.toLowerCase() === c.name.toLowerCase()).reduce((sum, item) => sum + item.amount, 0);
       });
 
       const totalVariableAndCards = variableExpenses + totalCardsExpenses;
@@ -837,11 +885,13 @@
 
       filteredData.forEach(t => {
         if (t.card && t.card !== 'Nenhum') {
-          const monthYearKey = (t.date ? t.date.substring(0, 7) : 'geral') + '_' + t.card;
-          if (!cardGroups[monthYearKey]) {
-            cardGroups[monthYearKey] = {
-              id: 'card_agg_' + monthYearKey,
-              monthYearKey: monthYearKey,
+          const ym = t.date ? t.date.substring(0, 7) : 'geral';
+          const groupKey = ym + '::' + t.card.toLowerCase();
+          if (!cardGroups[groupKey]) {
+            cardGroups[groupKey] = {
+              id: 'card_agg_' + groupKey,
+              yearMonth: ym,
+              cardName: t.card,
               date: t.date,
               description: t.card,
               category: 'Cartão de Crédito',
@@ -851,11 +901,11 @@
               itemIds: [],
               statuses: []
             };
-            processedList.push(cardGroups[monthYearKey]);
+            processedList.push(cardGroups[groupKey]);
           }
-          cardGroups[monthYearKey].amount += t.amount;
-          cardGroups[monthYearKey].itemIds.push(t.id);
-          cardGroups[monthYearKey].statuses.push(getEffectiveStatus(t));
+          cardGroups[groupKey].amount += t.amount;
+          cardGroups[groupKey].itemIds.push(t.id);
+          cardGroups[groupKey].statuses.push(getEffectiveStatus(t));
         } else {
           processedList.push(t);
         }
@@ -864,20 +914,21 @@
       processedList.forEach((t) => {
         const originalIndex = transactions.findIndex(item => item.id === t.id);
         const tr = document.createElement('tr');
-        const typeClass = t.type.toLowerCase().replace(' ', '-');
-        
+        const typeClass = String(t.type || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, '-');
+
         let statusHtml = '-';
         if (t.type !== 'Receita') {
           if (t.card && t.card !== 'Nenhum') {
             const allPaid = t.statuses.length > 0 && t.statuses.every(s => s === 'Pago');
             const anyDelayed = t.statuses.some(s => s === 'Atrasado');
-            let effStatus = allPaid ? 'Pago' : (anyDelayed ? 'Atrasado' : 'Pendente');
-            let statusClass = effStatus === 'Pago' ? 'pago' : (effStatus === 'Atrasado' ? 'atrasado' : 'pendente');
-            
-            statusHtml = `<button class="status-badge ${statusClass}" onclick="toggleCardStatus('${t.monthYearKey}', '${effStatus}')">${effStatus}</button>`;
+            const effStatus = allPaid ? 'Pago' : (anyDelayed ? 'Atrasado' : 'Pendente');
+            const statusClass = effStatus === 'Pago' ? 'pago' : (effStatus === 'Atrasado' ? 'atrasado' : 'pendente');
+
+            const encodedArgs = encodeURIComponent(JSON.stringify({ ym: t.yearMonth, card: t.cardName, cur: effStatus }));
+            statusHtml = `<button class="status-badge ${statusClass}" onclick="toggleCardStatusEncoded('${encodedArgs}')">${effStatus}</button>`;
           } else {
             const effStatus = getEffectiveStatus(t);
-            let statusClass = effStatus === 'Pago' ? 'pago' : (effStatus === 'Atrasado' ? 'atrasado' : 'pendente');
+            const statusClass = effStatus === 'Pago' ? 'pago' : (effStatus === 'Atrasado' ? 'atrasado' : 'pendente');
             statusHtml = `<button class="status-badge ${statusClass}" onclick="toggleStatus(${originalIndex})">${effStatus}</button>`;
           }
         }
@@ -887,7 +938,7 @@
           <td><strong>${t.description}</strong><br><small style="color:var(--text-muted)">${t.category}</small></td>
           <td><span class="tag ${typeClass}">${t.type}</span><br><strong>${formatCurrency(t.amount)}</strong></td>
           <td>${statusHtml}</td>
-          <td>${t.card && t.card !== 'Nenhum' ? '<small style="color:var(--text-muted)">-</small>' : '<button class="btn-delete" onclick="removeTransaction('+originalIndex+')">&times;</button>'}</td>
+          <td>${t.card && t.card !== 'Nenhum' ? '<small style="color:var(--text-muted)">-</small>' : '<button class="btn-delete" onclick="removeTransaction(' + originalIndex + ')">&times;</button>'}</td>
         `;
         transactionList.appendChild(tr);
       });
@@ -897,30 +948,27 @@
 
     document.getElementById('finance-form').addEventListener('submit', async function(e) {
       e.preventDefault();
-      const description = document.getElementById('description').value;
+      const description = document.getElementById('description').value.trim();
       const amount = parseFloat(document.getElementById('amount').value);
       const type = document.getElementById('type').value;
       const category = document.getElementById('category').value;
       const baseDateStr = document.getElementById('date').value;
-      const card = document.getElementById('card').value;
+      const card = (type === 'Receita') ? 'Nenhum' : normalizeCardValue(document.getElementById('card').value);
       const repeatMonths = parseInt(document.getElementById('recurrence-months').value) || 1;
 
       if (!description || isNaN(amount) || !baseDateStr) return;
 
       const itemsToCreate = [];
-      const baseDate = new Date(baseDateStr + 'T00:00:00');
+      const [bYear, bMonth, bDay] = baseDateStr.split('-').map(Number);
 
       for (let i = 0; i < repeatMonths; i++) {
-        let d = new Date(baseDate.getFullYear(), baseDate.getMonth() + i, baseDate.getDate());
-        let year = d.getFullYear();
-        let month = String(d.getMonth() + 1).padStart(2, '0');
-        let day = String(d.getDate()).padStart(2, '0');
-        let formattedDate = `${year}-${month}-${day}`;
+        const d = new Date(bYear, (bMonth - 1) + i, bDay);
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        const formattedDate = `${year}-${month}-${day}`;
 
-        let itemDesc = description;
-        if (repeatMonths > 1) {
-          itemDesc = `${description} (${i + 1}/${repeatMonths})`;
-        }
+        const itemDesc = repeatMonths > 1 ? `${description} (${i + 1}/${repeatMonths})` : description;
 
         itemsToCreate.push({
           id: 'id_' + Date.now() + '_' + i,
@@ -929,7 +977,7 @@
           type,
           category,
           date: formattedDate,
-          card: (type === 'Receita') ? 'Nenhum' : card,
+          card,
           status: type === 'Receita' ? 'N/A' : 'Pendente'
         });
       }
@@ -951,10 +999,10 @@
     async function toggleStatus(index) {
       const item = transactions[index];
       if (!item || item.type === 'Receita') return;
-      
+
       const currentEff = getEffectiveStatus(item);
       item.status = (currentEff === 'Pago') ? 'Pendente' : 'Pago';
-      
+
       const sub = subscriptions.find(s => s.id === item.id);
       if (sub) { sub.payStatus = item.status; renderSubscriptions(); }
 
@@ -966,18 +1014,17 @@
       });
     }
 
-    async function toggleCardStatus(monthYearKey, currentStatus) {
-      const newStatus = (currentStatus === 'Pago') ? 'Pendente' : 'Pago';
-      
-      const [yearMonth, ...cardNameParts] = monthYearKey.split('_');
-      const cardName = cardNameParts.join('_');
-
+    async function toggleCardStatusEncoded(encodedStr) {
+      const info = JSON.parse(decodeURIComponent(encodedStr));
+      const newStatus = (info.cur === 'Pago') ? 'Pendente' : 'Pago';
       const targetIds = [];
+
       transactions.forEach(t => {
-        if (t.card === cardName && t.date && t.date.substring(0, 7) === yearMonth) {
+        const tYm = t.date ? t.date.substring(0, 7) : 'geral';
+        if (t.card && t.card.toLowerCase() === info.card.toLowerCase() && tYm === info.ym) {
           t.status = newStatus;
           targetIds.push(t.id);
-          
+
           const sub = subscriptions.find(s => s.id === t.id);
           if (sub) sub.payStatus = newStatus;
         }
